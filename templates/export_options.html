@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Export {{ table_name }}</title>
+</head>
+<body>
+    <h1>🧾 Export Options</h1>
+    <p>Database: <strong>{{ database_name }}</strong></p>
+    <p>Table: <strong>{{ table_name }}</strong></p>
+
+    <ul>
+        <li><a href="/download/{{ database_name }}/{{ table_name }}/csv?start_date={{ start_date }}&end_date={{ end_date }}">Download as CSV</a></li>
+        <li><a href="/download/{{ database_name }}/{{ table_name }}/xlsx?start_date={{ start_date }}&end_date={{ end_date }}">Download as Excel</a></li>
+        <li><a href="/download/{{ database_name }}/{{ table_name }}/pdf?start_date={{ start_date }}&end_date={{ end_date }}">Download as PDF</a></li>
+    </ul>
+
+    <a href="/">⬅ Back to Home</a>
+</body>
+</html>
