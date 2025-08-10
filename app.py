@@ -11,7 +11,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
@@ -22,10 +21,9 @@ station_master_df = pd.read_excel('station_master.xlsx')
 DATA_FOLDER = 'data'
 REPORT_FOLDER = os.path.join(DATA_FOLDER, 'report')
 
-# Google Drive setup
 USE_GOOGLE_DRIVE = os.getenv('USE_GOOGLE_DRIVE', 'False').lower() == 'true'
-GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')  # The Drive folder ID where CSVs are stored
-GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE')  # Path to your service account JSON
+GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE')
 
 drive_service = None
 
@@ -36,7 +34,6 @@ if USE_GOOGLE_DRIVE:
     )
     drive_service = build('drive', 'v3', credentials=credentials)
 
-
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -45,92 +42,58 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-
 def find_csv_path(logger_id):
-    """
-    Searches for a file named '<logger_id>_enriched' or '<logger_id>_enriched.csv'
-    in all nested folders within DATA_FOLDER or Google Drive if enabled.
-    """
-    base_filename = f"{logger_id}_enriched"
-    possible_filenames = [f"{base_filename}.csv", base_filename]
-
+    filename = f"{logger_id}_enriched.csv"
     if USE_GOOGLE_DRIVE:
-        # Google Drive logic
-        query = (
-            f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and "
-            f"name contains '{base_filename}' and trashed = false"
-        )
+        query = f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and name = '{filename}' and trashed = false"
         response = drive_service.files().list(q=query, fields="files(id, name)").execute()
         files = response.get('files', [])
-
-        for f in files:
-            if f['name'] == f"{base_filename}.csv":
-                return f['id']
-        for f in files:
-            if f['name'] == base_filename:
-                return f['id']
-        return None
+        if not files:
+            app.logger.warning(f"File {filename} not found in Google Drive folder.")
+            return None
+        return files[0]['id']
     else:
-        # Local nested folder logic
         for root, _, files in os.walk(DATA_FOLDER):
             for file in files:
-                # Debug: print(f"Checking file: {os.path.join(root, file)}")
-                if file in possible_filenames:
+                if file == filename:
                     return os.path.join(root, file)
+        app.logger.warning(f"File {filename} not found in local folder.")
         return None
 
-
 def load_csv_from_drive(file_id):
-    """Download CSV content from Google Drive file ID into pandas DataFrame"""
     request = drive_service.files().get_media(fileId=file_id)
     fh = BytesIO()
     downloader = MediaIoBaseDownload(fh, request)
-
     done = False
     while not done:
         status, done = downloader.next_chunk()
-
     fh.seek(0)
     df = pd.read_csv(fh, low_memory=False)
     return df
 
-
 def load_csv(logger_id):
-    """
-    Load CSV data either from local or from Google Drive depending on config.
-    Returns a pandas DataFrame or None if not found.
-    """
     file_path_or_id = find_csv_path(logger_id)
     if not file_path_or_id:
+        app.logger.error(f"CSV file for logger_id {logger_id} not found.")
         return None
-
-    if USE_GOOGLE_DRIVE:
-        try:
+    try:
+        if USE_GOOGLE_DRIVE:
             df = load_csv_from_drive(file_path_or_id)
-            df = parse_datetime_column(df)
-            return df
-        except Exception as e:
-            print(f"Error loading CSV from Google Drive: {e}")
-            return None
-    else:
-        try:
+        else:
             df = pd.read_csv(file_path_or_id, low_memory=False)
-            df = parse_datetime_column(df)
-            return df
-        except Exception as e:
-            print(f"Error loading CSV from local: {e}")
-            return None
-
+        df = parse_datetime_column(df)
+        return df
+    except Exception as e:
+        app.logger.error(f"Error loading CSV for {logger_id}: {e}")
+        return None
 
 def parse_datetime_column(df):
     df['date_time'] = pd.to_datetime(df['date_time'], format="%d/%m/%y %H:%M", errors='coerce')
     df.dropna(subset=['date_time'], inplace=True)
     return df
 
+# -------- Routes -------- #
 
-# -- rest of your routes and code unchanged --
-
-# Public Routes
 @app.route('/')
 def home():
     return render_template('home.html')
@@ -154,7 +117,7 @@ def submit_contact():
     email = request.form.get('email')
     phone = request.form.get('phone')
     message = request.form.get('message')
-    print(f"Contact form submitted: Name={name}, Email={email}, Phone={phone}, Message={message}")
+    app.logger.info(f"Contact form submitted: Name={name}, Email={email}, Phone={phone}, Message={message}")
     return render_template('contact.html', success=True)
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -174,7 +137,6 @@ def logout():
     session.clear()
     return redirect(url_for('home'))
 
-# Protected Routes
 @app.route('/data')
 @login_required
 def data():
@@ -192,7 +154,6 @@ def index():
 def dashboard():
     labels = pd.date_range(end=pd.Timestamp.today(), periods=7).strftime('%Y-%m-%d').tolist()
     counts = [5, 9, 7, 8, 4, 6, 10]
-
     try:
         summary_df = pd.read_excel(os.path.join(REPORT_FOLDER, 'mechatronics_summary.xlsx'))
         station_df = pd.read_excel(os.path.join(REPORT_FOLDER, 'station_details_by_agency.xlsx'))
@@ -201,7 +162,6 @@ def dashboard():
     except Exception as e:
         summary_html = f"<div class='alert alert-danger'>Failed to load summary: {e}</div>"
         station_html = f"<div class='alert alert-danger'>Failed to load station details: {e}</div>"
-
     return render_template('dashboard.html',
                            labels=labels,
                            counts=counts,
@@ -213,12 +173,10 @@ def dashboard():
 def download_report(filename):
     safe_files = {'mechatronics_summary.xlsx', 'station_details_by_agency.xlsx'}
     if filename not in safe_files:
-        abort(403)
-
+        abort(403, description="Access forbidden")
     path = os.path.join(REPORT_FOLDER, filename)
     if not os.path.exists(path):
-        abort(404)
-
+        abort(404, description="File not found")
     return send_file(path, as_attachment=True)
 
 @app.route('/get_station_logger_info', methods=['POST'])
@@ -256,7 +214,6 @@ def get_dates():
     df = load_csv(logger_id)
     if df is None:
         return jsonify([])
-
     dates = df['date_time'].dt.date.unique()
     return jsonify([str(d) for d in sorted(dates)])
 
@@ -290,10 +247,28 @@ def get_filtered_df(logger_id, start_date, end_date):
     df = load_csv(logger_id)
     if df is None:
         return None
-
     mask = (df['date_time'].dt.date >= pd.to_datetime(start_date).date()) & \
            (df['date_time'].dt.date <= pd.to_datetime(end_date).date())
     return df.loc[mask]
+
+def send_dataframe_as_file(df, logger_id, start_date, end_date, file_type='csv'):
+    output = BytesIO()
+    filename = f"{logger_id}_{start_date}_to_{end_date}.{file_type}"
+    try:
+        if file_type == 'csv':
+            df.to_csv(output, index=False)
+            mimetype = 'text/csv'
+        elif file_type == 'xlsx':
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Data')
+            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        else:
+            abort(400, description="Unsupported file type")
+        output.seek(0)
+        return send_file(output, mimetype=mimetype, as_attachment=True, download_name=filename)
+    except Exception as e:
+        app.logger.error(f"Error sending {file_type} file: {e}")
+        abort(500, description="Internal Server Error")
 
 @app.route('/download_csv')
 @login_required
@@ -302,18 +277,13 @@ def download_csv():
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     if not all([logger_id, start_date, end_date]):
-        abort(400)
+        abort(400, description="Missing required parameters")
 
     df = get_filtered_df(logger_id, start_date, end_date)
     if df is None or df.empty:
-        abort(404)
+        abort(404, description="No data found")
 
-    output = BytesIO()
-    df.to_csv(output, index=False)
-    output.seek(0)
-
-    return send_file(output, mimetype='text/csv', as_attachment=True,
-                     download_name=f"{logger_id}_{start_date}_to_{end_date}.csv")
+    return send_dataframe_as_file(df, logger_id, start_date, end_date, file_type='csv')
 
 @app.route('/download_excel')
 @login_required
@@ -322,21 +292,14 @@ def download_excel():
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     if not all([logger_id, start_date, end_date]):
-        abort(400)
+        abort(400, description="Missing required parameters")
 
     df = get_filtered_df(logger_id, start_date, end_date)
     if df is None or df.empty:
-        abort(404)
+        abort(404, description="No data found")
 
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Data')
-    output.seek(0)
+    return send_dataframe_as_file(df, logger_id, start_date, end_date, file_type='xlsx')
 
-    return send_file(output,
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                     as_attachment=True,
-                     download_name=f"{logger_id}_{start_date}_to_{end_date}.xlsx")
 
 @app.route('/download_pdf')
 @login_required
@@ -345,11 +308,11 @@ def download_pdf():
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     if not all([logger_id, start_date, end_date]):
-        abort(400)
+        abort(400, description="Missing required parameters")
 
     df = get_filtered_df(logger_id, start_date, end_date)
     if df is None or df.empty:
-        abort(404)
+        abort(404, description="No data found")
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -365,7 +328,7 @@ def download_pdf():
         pdf.cell(col_width, line_height, str(col), border=1, align='C')
     pdf.ln(line_height)
 
-    # Rows (limit 40 rows)
+    # Rows (limit to 40 rows for PDF)
     for _, row in df.head(40).iterrows():
         for item in row:
             text = str(item)
@@ -380,7 +343,6 @@ def download_pdf():
 
     return send_file(output, mimetype='application/pdf', as_attachment=True,
                      download_name=f"{logger_id}_{start_date}_to_{end_date}.pdf")
-
 
 if __name__ == '__main__':
     app.run(debug=True)
