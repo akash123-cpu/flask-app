@@ -48,26 +48,34 @@ def login_required(f):
 
 def find_csv_path(logger_id):
     """
-    Old local logic: Find file path on local disk
-    New Google Drive logic: Return file ID and download content
+    Searches for a file named '<logger_id>_enriched' or '<logger_id>_enriched.csv'
+    in all nested folders within DATA_FOLDER or Google Drive if enabled.
     """
-
-    filename = f"{logger_id}_enriched.csv"
+    base_filename = f"{logger_id}_enriched"
+    possible_filenames = [f"{base_filename}.csv", base_filename]
 
     if USE_GOOGLE_DRIVE:
-        # Search file in Google Drive folder
-        query = f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and name = '{filename}' and trashed = false"
+        # Google Drive logic
+        query = (
+            f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and "
+            f"name contains '{base_filename}' and trashed = false"
+        )
         response = drive_service.files().list(q=query, fields="files(id, name)").execute()
         files = response.get('files', [])
-        if not files:
-            return None
-        file_id = files[0]['id']
-        return file_id  # Return Google Drive file ID
+
+        for f in files:
+            if f['name'] == f"{base_filename}.csv":
+                return f['id']
+        for f in files:
+            if f['name'] == base_filename:
+                return f['id']
+        return None
     else:
-        # Local file search
+        # Local nested folder logic
         for root, _, files in os.walk(DATA_FOLDER):
             for file in files:
-                if file == filename:
+                # Debug: print(f"Checking file: {os.path.join(root, file)}")
+                if file in possible_filenames:
                     return os.path.join(root, file)
         return None
 
