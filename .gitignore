@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 credentials.json
 token.json
+echo "credentials/service_account.json" >> .gitignore
